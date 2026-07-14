@@ -1,16 +1,31 @@
-MIT License
+Personal Use License
 
 Copyright (c) 2026 EagleB
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+of this software and associated documentation files (the "Software"), to use
+the Software for personal, non-commercial purposes only, subject to the
+following conditions:
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+1. Personal use only. The Software may be used only by individuals for their
+   own private, non-commercial purposes. Use of the Software by, for, or on
+   behalf of any business, organization, or other commercial entity, or any
+   use intended for or directed toward commercial advantage or monetary
+   compensation, is prohibited.
+
+2. No derivatives. You may not modify, adapt, translate, or create derivative
+   works based on the Software, and you may not distribute, publish, or
+   sublicense any modified version of the Software.
+
+3. No redistribution of modified versions. Unmodified copies of the Software
+   may be shared for personal, non-commercial use only, provided this license
+   and the above copyright notice are included with every copy.
+
+4. No commercial use. You may not sell, rent, lease, sublicense, or otherwise
+   exploit the Software or any part of it for commercial purposes.
+
+Any use not expressly permitted by this license is prohibited without prior
+written permission from the copyright holder.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
