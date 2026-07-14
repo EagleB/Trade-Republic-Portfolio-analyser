@@ -1,0 +1,15 @@
+Date;Type;Value;Note;ISIN;Shares
+2025-01-02;Deposit;1500,00;Bonifico in entrata;;
+2025-01-05;Savings plan execution;-400,00;Vanguard FTSE All-World;IE00BK5BQT80;3,4188
+2025-01-05;Savings plan execution;-100,00;iShares Core Euro Govt Bond;IE00B4WXJJ64;0,8112
+2025-01-20;Buy;-250,00;Apple Inc.;US0378331005;1,0500
+2025-02-01;Interest;2,10;Interessi;;
+2025-02-05;Savings plan execution;-400,00;Vanguard FTSE All-World;IE00BK5BQT80;3,3901
+2025-02-05;Savings plan execution;-100,00;iShares Core Euro Govt Bond;IE00B4WXJJ64;0,8090
+2025-02-14;Card Successful Transaction;-35,50;Pagamento carta;;
+2025-03-01;Interest;2,45;Interessi;;
+2025-03-03;Deposit;500,00;Bonifico in entrata;;
+2025-03-05;Savings plan execution;-400,00;Vanguard FTSE All-World;IE00BK5BQT80;3,2711
+2025-03-05;Savings plan execution;-100,00;iShares Core Euro Govt Bond;IE00B4WXJJ64;0,8154
+2025-03-15;Dividend;1,87;Dividendo Apple;US0378331005;
+2025-04-02;Sell;120,00;Apple Inc.;US0378331005;0,5000

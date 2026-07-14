@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trade Republic Analyzer</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📊</text></svg>">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <link rel="stylesheet" href="/styles.css">
+</head>
+<body class="dark-theme">
+    <div class="app-container">
+        <header>
+            <h1>Portfolio <span>Analyzer</span></h1>
+            <p>Upload your Trade Republic transaction export (CSV) to analyze asset classes, country exposure and risk — and simulate your accumulation plan.</p>
+        </header>
+
+        <main>
+            <section id="upload-section" class="card dropzone">
+                <input type="file" id="csv-file" accept=".csv,.txt" hidden />
+                <label for="csv-file" class="dropzone-label">
+                    <div class="icon">📁</div>
+                    <h3>Drag &amp; Drop your CSV here</h3>
+                    <p>or click to browse</p>
+                    <p class="text-sm text-gray mt-1">Works with Trade Republic transaction exports (Italian, English or German column names).</p>
+                </label>
+            </section>
+
+            <div id="loading" class="hidden">
+                <div class="spinner"></div>
+                <p>Analyzing transactions and fetching web data...</p>
+                <p id="loading-status" class="text-sm text-gray"></p>
+            </div>
+
+            <section id="dashboard" class="hidden">
+
+                <!-- Key metrics -->
+                <div class="metrics-grid">
+                    <div class="metric-card">
+                        <h3>Total Portfolio</h3>
+                        <p id="total-value">€0.00</p>
+                    </div>
+                    <div class="metric-card">
+                        <h3>Invested in Securities</h3>
+                        <p id="invested-value">€0.00</p>
+                    </div>
+                    <div class="metric-card">
+                        <h3>Cash</h3>
+                        <p id="cash-value">€0.00</p>
+                        <button id="edit-cash" class="link-btn">edit</button>
+                    </div>
+                    <div class="metric-card">
+                        <h3>Risk Score</h3>
+                        <p id="risk-score">–</p>
+                        <span id="risk-score-label" class="text-sm text-gray"></span>
+                    </div>
+                </div>
+
+                <!-- Risk profile -->
+                <div class="card mb-4" id="risk-profile-card">
+                    <h2>Risk Profile <span class="text-sm text-gray">(based on web data: volatility &amp; drawdowns from justETF / Yahoo Finance)</span></h2>
+                    <div class="risk-profile-grid">
+                        <div class="risk-gauge">
+                            <div class="risk-scale" id="risk-scale"></div>
+                            <p id="risk-description" class="text-gray mt-1"></p>
+                        </div>
+                        <div class="risk-facts">
+                            <div class="risk-fact"><span>Est. portfolio volatility (weighted)</span><strong id="risk-vol">–</strong></div>
+                            <div class="risk-fact"><span>Worst historical drawdown (weighted)</span><strong id="risk-dd">–</strong></div>
+                            <div class="risk-fact"><span>Developed markets</span><strong id="developed-pct">–</strong></div>
+                            <div class="risk-fact"><span>Emerging markets</span><strong id="emerging-pct">–</strong></div>
+                        </div>
+                    </div>
+                    <div id="risk-warnings" class="suggestions-list"></div>
+                </div>
+
+                <!-- Charts -->
+                <div class="charts-grid">
+                    <div class="chart-card">
+                        <h3>Asset Classes (Stocks / Bonds / Cash)</h3>
+                        <div class="chart-container"><canvas id="assetClassChart"></canvas></div>
+                    </div>
+                    <div class="chart-card">
+                        <h3>Country Exposure (look-through)</h3>
+                        <div class="chart-container"><canvas id="countryChart"></canvas></div>
+                    </div>
+                    <div class="chart-card">
+                        <h3>Developed vs Emerging</h3>
+                        <div class="chart-container"><canvas id="devEmgChart"></canvas></div>
+                    </div>
+                    <div class="chart-card">
+                        <h3>Top Holdings</h3>
+                        <div class="chart-container"><canvas id="topHoldingsChart"></canvas></div>
+                    </div>
+                </div>
+
+                <!-- Holdings table -->
+                <div class="card mt-4">
+                    <h2>Holdings Detail</h2>
+                    <div class="table-wrap">
+                        <table id="holdings-table">
+                            <thead>
+                                <tr>
+                                    <th>Asset</th><th>Type</th><th>Class</th>
+                                    <th class="num">Invested</th><th class="num">Weight</th>
+                                    <th class="num">Risk (1–7)</th><th class="num">Volatility</th><th>Data source</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Accumulation plan simulator -->
+                <div class="rebalance-section card mt-4">
+                    <h2>Accumulation Plan Simulator</h2>
+                    <p class="text-gray">Set your monthly savings plan, choose a target allocation, and see how your portfolio evolves — rebalancing with new contributions only, without selling anything.</p>
+
+                    <div class="sim-controls mt-2">
+                        <div class="sim-control">
+                            <label for="sim-monthly">Monthly investment (€)</label>
+                            <input type="number" id="sim-monthly" min="0" step="10" value="500">
+                        </div>
+                        <div class="sim-control sim-horizon">
+                            <label for="sim-months">Horizon: <span id="sim-months-label">24 months</span></label>
+                            <div class="horizon-row">
+                                <input type="range" id="sim-months" min="1" max="480" step="1" value="24">
+                                <div class="unit-toggle" id="horizon-unit">
+                                    <button type="button" data-unit="months" class="active">Months</button>
+                                    <button type="button" data-unit="years">Years</button>
+                                </div>
+                            </div>
+                            <div class="preset-chips" id="horizon-presets">
+                                <button type="button" data-months="3">3m</button>
+                                <button type="button" data-months="6">6m</button>
+                                <button type="button" data-months="12">1y</button>
+                                <button type="button" data-months="36">3y</button>
+                                <button type="button" data-months="60">5y</button>
+                                <button type="button" data-months="120">10y</button>
+                                <button type="button" data-months="180">15y</button>
+                                <button type="button" data-months="240">20y</button>
+                            </div>
+                        </div>
+                        <div class="sim-control">
+                            <label for="tax-rate">Capital gains tax (%)</label>
+                            <input type="number" id="tax-rate" min="0" max="60" step="0.5" value="26">
+                        </div>
+                        <div class="sim-control checkbox">
+                            <label><input type="checkbox" id="sim-growth" checked> Include expected market returns (editable per asset class in the what-if section below)</label>
+                        </div>
+                    </div>
+
+                    <h3 class="mt-4">Target allocation</h3>
+                    <div class="sliders-container" id="target-sliders"></div>
+
+                    <h3 class="mt-4">Monthly plan per asset <button id="suggest-plan" class="btn-primary">✨ Suggest plan to reach targets</button></h3>
+                    <div class="table-wrap">
+                        <table id="plan-table">
+                            <thead><tr><th>Asset</th><th>Class</th><th class="num">Current weight</th><th class="num">€ / month</th></tr></thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                    <p id="plan-balance" class="text-sm text-gray mt-1"></p>
+
+                    <div class="charts-grid mt-4">
+                        <div class="chart-card" style="grid-column: 1 / -1;">
+                            <h3>Allocation: current vs projected vs target</h3>
+                            <div class="chart-container"><canvas id="projectionChart"></canvas></div>
+                        </div>
+                        <div class="chart-card">
+                            <h3>Projected country exposure</h3>
+                            <div class="chart-container"><canvas id="projCountryChart"></canvas></div>
+                        </div>
+                        <div class="chart-card">
+                            <h3>Projected portfolio value</h3>
+                            <div class="chart-container"><canvas id="projValueChart"></canvas></div>
+                        </div>
+                    </div>
+                    <div id="sim-summary" class="suggestions-list mt-2"></div>
+
+                    <!-- Partial withdrawal simulator -->
+                    <h3 class="mt-4">💶 Partial withdrawal simulator</h3>
+                    <p class="text-gray text-sm">Simulate cashing out part of your portfolio mid-plan: see the capital gains tax due at withdrawal and how it changes your projected growth and net-of-tax value.</p>
+                    <div class="sim-controls mt-2">
+                        <div class="sim-control">
+                            <label for="withdrawal-amount">Withdrawal amount (€)</label>
+                            <input type="number" id="withdrawal-amount" min="0" step="100" value="0">
+                        </div>
+                        <div class="sim-control">
+                            <label for="withdrawal-month">Withdraw at month</label>
+                            <input type="number" id="withdrawal-month" min="0" step="1" value="0">
+                        </div>
+                    </div>
+                    <div class="charts-grid mt-2">
+                        <div class="chart-card" style="grid-column: 1 / -1;">
+                            <h3>Portfolio value: with vs without withdrawal</h3>
+                            <div class="chart-container"><canvas id="withdrawalChart"></canvas></div>
+                        </div>
+                    </div>
+                    <div id="withdrawal-result" class="suggestions-list mt-2"></div>
+
+                    <!-- What-if scenario analysis -->
+                    <h3 class="mt-4">What-if: expected returns &amp; market scenarios</h3>
+                    <p class="text-gray text-sm">Adjust the expected annual return of each asset class and compare how your plan performs if markets do worse or better than expected.</p>
+                    <div class="sim-controls mt-2" id="growth-inputs"></div>
+                    <div class="charts-grid mt-2">
+                        <div class="chart-card" style="grid-column: 1 / -1;">
+                            <h3>Scenario analysis: pessimistic vs base vs optimistic</h3>
+                            <div class="chart-container"><canvas id="scenarioChart"></canvas></div>
+                        </div>
+                    </div>
+                    <div id="scenario-summary" class="suggestions-list mt-2"></div>
+
+                    <!-- Goal planner -->
+                    <h3 class="mt-4">🎯 Goal planner: how much per month to reach a target?</h3>
+                    <p class="text-gray text-sm">Given the expected returns above and your target allocation, compute the monthly PAC contribution needed to reach a target amount.</p>
+                    <div class="sim-controls mt-2">
+                        <div class="sim-control">
+                            <label for="goal-amount">Target amount (€)</label>
+                            <input type="number" id="goal-amount" min="0" step="1000" value="50000">
+                        </div>
+                        <div class="sim-control">
+                            <label for="goal-years">Time to reach it (years)</label>
+                            <input type="number" id="goal-years" min="1" max="50" step="1" value="10">
+                        </div>
+                    </div>
+                    <div id="goal-result" class="suggestions-list mt-2"></div>
+                </div>
+
+                <p class="text-sm text-gray mt-4">Weights are based on net invested capital (buys − sells) plus cash, not live market prices. Country and risk data: justETF &amp; Yahoo Finance. This is not financial advice.</p>
+            </section>
+        </main>
+    </div>
+    <script src="/app.js"></script>
+</body>
+</html>

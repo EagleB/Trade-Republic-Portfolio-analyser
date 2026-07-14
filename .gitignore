@@ -1,0 +1,4 @@
+*.csv
+!sample_transactions.csv
+asset_cache.json
+__pycache__/
