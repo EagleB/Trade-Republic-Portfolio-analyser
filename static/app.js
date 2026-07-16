@@ -70,21 +70,61 @@ document.addEventListener('DOMContentLoaded', () => {
     uploadSection.addEventListener('drop', (e) => {
         e.preventDefault();
         uploadSection.style.borderColor = 'var(--card-border)';
-        if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+        if (e.dataTransfer.files.length) handleFiles(e.dataTransfer.files);
     });
-    fileInput.addEventListener('change', (e) => { if (e.target.files.length) handleFile(e.target.files[0]); });
+    fileInput.addEventListener('change', (e) => { if (e.target.files.length) handleFiles(e.target.files); });
 
-    function handleFile(file) {
+    async function handleFiles(fileList) {
+        const files = Array.from(fileList);
         uploadSection.classList.add('hidden');
         $('loading').classList.remove('hidden');
-        $('loading-status').textContent = 'Parsing CSV file...';
-        Papa.parse(file, {
-            header: true,
-            skipEmptyLines: true,
-            delimitersToGuess: [',', ';', '\t', '|'],
-            complete: (results) => processTransactions(results.data),
-            error: () => { $('loading-status').textContent = 'Error: could not parse the file.'; },
+        $('loading-status').textContent = 'Parsing file(s)...';
+        try {
+            const txLists = await Promise.all(files.map(parseFile));
+            await processTransactions(txLists.flat());
+        } catch (err) {
+            $('loading-status').textContent = `Error: ${err.message || 'could not parse the file(s).'}`;
+        }
+    }
+
+    function parseFile(file) {
+        return /\.xlsx?$/i.test(file.name) ? parseExcel(file) : parseCsv(file);
+    }
+
+    function parseCsv(file) {
+        return new Promise((resolve, reject) => {
+            Papa.parse(file, {
+                header: true,
+                skipEmptyLines: true,
+                delimitersToGuess: [',', ';', '\t', '|'],
+                complete: (results) => resolve(normalizeRows(results.data)),
+                error: () => reject(new Error(`could not parse ${file.name}.`)),
+            });
         });
+    }
+
+    async function parseExcel(file) {
+        const buf = await file.arrayBuffer();
+        // XLSX.read handles .xlsx, legacy .xls and HTML tables mislabeled .xls (common Fineco exports)
+        const wb = XLSX.read(buf);
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
+        return normalizeRows(aoaToObjects(aoa));
+    }
+
+    const HEADER_KEYWORDS = ['isin', 'segno', 'controvalore', 'entrate', 'uscite', 'quantit', 'descrizione', 'importo', 'value', 'type'];
+
+    // Fineco Excel exports put preamble rows (account info, filters) above the real header.
+    function aoaToObjects(aoa) {
+        let headerIdx = 0, best = 0;
+        for (let i = 0; i < Math.min(aoa.length, 15); i++) {
+            const hits = aoa[i].filter(c => HEADER_KEYWORDS.some(k => String(c).toLowerCase().includes(k))).length;
+            if (hits > best) { best = hits; headerIdx = i; }
+        }
+        const headers = aoa[headerIdx].map(h => String(h).trim());
+        return aoa.slice(headerIdx + 1)
+            .filter(r => r.some(c => String(c).trim() !== ''))
+            .map(r => Object.fromEntries(headers.map((h, i) => [h, r[i]]).filter(([h]) => h)));
     }
 
     // ------------------------------------------------------------------
@@ -136,22 +176,37 @@ document.addEventListener('DOMContentLoaded', () => {
         return null;
     }
 
-    async function processTransactions(rows) {
-        if (!rows.length) { $('loading-status').textContent = 'Error: the file appears to be empty.'; return; }
-        const headers = Object.keys(rows[0]);
+    // ------------------------------------------------------------------
+    // Broker adapters: each turns raw rows into canonical transactions
+    // { kind, isin ('' for cash rows), name, amount (signed: money out < 0), shares }
+    // ------------------------------------------------------------------
+    function detectFormat(headers) {
+        const low = headers.map(h => h.toLowerCase());
+        const has = (p) => low.some(h => h.includes(p));
+        if (has('entrate') && has('uscite')) return 'fineco-mov';
+        if (has('segno') || (has('controvalore') && has('quantit'))) return 'fineco-sec';
+        return 'tr';
+    }
 
+    function normalizeRows(rows) {
+        if (!rows.length) return [];
+        const headers = Object.keys(rows[0]).filter(Boolean);
+        const fmt = detectFormat(headers);
+        if (fmt === 'fineco-mov') return adaptFinecoMovements(rows, headers);
+        if (fmt === 'fineco-sec') return adaptFinecoSecurities(rows, headers);
+        return adaptTradeRepublic(rows, headers);
+    }
+
+    function adaptTradeRepublic(rows, headers) {
         const isinCol = findColumn(headers, ['isin']);
         const typeCol = findColumn(headers, ['type', 'tipo', 'transaktion', 'event', 'tip']);
         const valueCol = findColumn(headers, ['value', 'valore', 'amount', 'importo', 'betrag', 'total', 'totale', 'cash']);
         const nameCol = findColumn(headers, ['name', 'nome', 'desc', 'note', 'bezeichnung', 'titolo']);
         const sharesCol = findColumn(headers, ['share', 'quantit', 'quote', 'stück', 'stuck', 'anteil', 'unit']);
 
-        if (!valueCol) { $('loading-status').textContent = 'Error: could not detect an amount/value column.'; return; }
+        if (!valueCol) throw new Error('could not detect an amount/value column.');
 
-        const holdings = {};
-        let signedSum = 0, hasNegatives = false;
-        let deposits = 0, withdrawals = 0, dividends = 0, interest = 0, fees = 0, card = 0, buys = 0, sells = 0;
-
+        const txs = [];
         rows.forEach(row => {
             const value = parseNumber(row[valueCol]);
             if (isNaN(value)) return;
@@ -164,26 +219,119 @@ document.addEventListener('DOMContentLoaded', () => {
                 // in TR exports money leaving the account (negative) is a purchase.
                 kind = value < 0 ? 'buy' : 'sell';
             }
+            txs.push({
+                kind,
+                isin: isAsset ? isin : '',
+                name: String(row[nameCol] || isin || ''),
+                amount: value,
+                shares: Math.abs(parseNumber(row[sharesCol]) || 0),
+            });
+        });
+        return txs;
+    }
 
-            signedSum += value;
-            if (value < 0) hasNegatives = true;
+    // Fineco "Ordini e Contabili" export: Segno A/V, unsigned Controvalore, Commissioni.
+    function adaptFinecoSecurities(rows, headers) {
+        const segnoCol = findColumn(headers, ['segno']);
+        const isinCol = findColumn(headers, ['isin']);
+        const qtyCol = findColumn(headers, ['quantit']);
+        const valueCol = findColumn(headers, ['controvalore', 'importo']);
+        const feeCol = findColumn(headers, ['commission']);
+        const nameCol = findColumn(headers, ['descrizione', 'titolo', 'simbolo', 'strumento']);
 
-            if (isAsset && (kind === 'buy' || kind === 'sell')) {
-                if (!holdings[isin]) {
-                    holdings[isin] = { isin, name: row[nameCol] || isin, invested: 0, shares: 0 };
+        if (!valueCol) throw new Error('could not detect the Controvalore column in the Fineco export.');
+
+        const txs = [];
+        rows.forEach(row => {
+            const value = parseNumber(row[valueCol]);
+            if (isNaN(value) || value === 0) return;
+            const isin = String(row[isinCol] || '').trim().toUpperCase();
+            const segno = String(row[segnoCol] || '').trim().toUpperCase();
+            let kind;
+            if (segno.startsWith('V')) kind = 'sell';
+            else if (segno.startsWith('A') || segno.startsWith('C')) kind = 'buy';
+            else {
+                kind = classifyType(String(row[nameCol] || ''));
+                if (kind !== 'buy' && kind !== 'sell') kind = value < 0 ? 'buy' : 'sell';
+            }
+            txs.push({
+                kind,
+                isin: ISIN_RE.test(isin) ? isin : '',
+                name: String(row[nameCol] || isin || ''),
+                amount: kind === 'buy' ? -Math.abs(value) : Math.abs(value),
+                shares: Math.abs(parseNumber(row[qtyCol]) || 0),
+            });
+            const fee = Math.abs(parseNumber(row[feeCol]) || 0);
+            if (fee) txs.push({ kind: 'fee', isin: '', name: 'Commissioni', amount: -fee, shares: 0 });
+        });
+        return txs;
+    }
+
+    // Fineco "Movimenti conto" export: Entrate/Uscite columns, classification by Descrizione.
+    // Securities settlements also appear here but are already covered by the securities
+    // export, so they are skipped to avoid double counting.
+    const FINECO_SETTLEMENT_RE = /compravendita|acquisto\s+titoli|vendita\s+titoli|sottoscrizion|rimborso\s+titoli|eseguito|regolamento\s+titoli/i;
+    const FINECO_MOV_RULES = [
+        ['dividend', /stacco\s+cedole|cedola|dividend/i],
+        ['interest', /interess|competenze/i],
+        ['fee', /imposta|bollo|canone|commission|spese/i],
+        ['deposit', /bonifico|versamento|giroconto|accredito\s+stipendio/i],
+        ['withdrawal', /prelievo|bancomat/i],
+        ['card', /carta|pagobancomat|\bpos\b/i],
+    ];
+
+    function adaptFinecoMovements(rows, headers) {
+        const inCol = findColumn(headers, ['entrate']);
+        const outCol = findColumn(headers, ['uscite']);
+        const descCols = headers.filter(h => /descrizione|causale/i.test(h));
+
+        const txs = [];
+        rows.forEach(row => {
+            const inc = parseNumber(row[inCol]);
+            const out = parseNumber(row[outCol]);
+            const amount = (!isNaN(inc) && inc !== 0) ? Math.abs(inc)
+                : (!isNaN(out) && out !== 0) ? -Math.abs(out) : NaN;
+            if (isNaN(amount)) return;
+            const desc = descCols.map(c => String(row[c] || '')).join(' ');
+            if (FINECO_SETTLEMENT_RE.test(desc)) return;
+            let kind = null;
+            for (const [k, re] of FINECO_MOV_RULES) { if (re.test(desc)) { kind = k; break; } }
+            if (!kind) kind = classifyType(desc);
+            if (kind === 'deposit' && amount < 0) kind = 'withdrawal';
+            txs.push({ kind, isin: '', name: desc.trim(), amount, shares: 0 });
+        });
+        return txs;
+    }
+
+    // ------------------------------------------------------------------
+    // Shared aggregation over canonical transactions (broker-independent)
+    // ------------------------------------------------------------------
+    async function processTransactions(txs) {
+        if (!txs.length) { $('loading-status').textContent = 'Error: no transactions found in the file(s).'; return; }
+
+        const holdings = {};
+        let signedSum = 0, hasNegatives = false;
+        let deposits = 0, withdrawals = 0, dividends = 0, interest = 0, fees = 0, card = 0, buys = 0, sells = 0;
+
+        txs.forEach(tx => {
+            signedSum += tx.amount;
+            if (tx.amount < 0) hasNegatives = true;
+
+            if (tx.isin && (tx.kind === 'buy' || tx.kind === 'sell')) {
+                if (!holdings[tx.isin]) {
+                    holdings[tx.isin] = { isin: tx.isin, name: tx.name || tx.isin, invested: 0, shares: 0 };
                 }
-                const amount = Math.abs(value);
-                const sh = Math.abs(parseNumber(row[sharesCol]) || 0);
-                if (kind === 'buy') { holdings[isin].invested += amount; holdings[isin].shares += sh; buys += amount; }
-                else { holdings[isin].invested -= amount; holdings[isin].shares -= sh; sells += amount; }
+                const amount = Math.abs(tx.amount);
+                if (tx.kind === 'buy') { holdings[tx.isin].invested += amount; holdings[tx.isin].shares += tx.shares; buys += amount; }
+                else { holdings[tx.isin].invested -= amount; holdings[tx.isin].shares -= tx.shares; sells += amount; }
             } else {
-                const amount = Math.abs(value);
-                if (kind === 'deposit') deposits += amount;
-                else if (kind === 'withdrawal') withdrawals += amount;
-                else if (kind === 'dividend') dividends += amount;
-                else if (kind === 'interest') interest += amount;
-                else if (kind === 'fee') fees += amount;
-                else if (kind === 'card') card += amount;
+                const amount = Math.abs(tx.amount);
+                if (tx.kind === 'deposit') deposits += amount;
+                else if (tx.kind === 'withdrawal') withdrawals += amount;
+                else if (tx.kind === 'dividend') dividends += amount;
+                else if (tx.kind === 'interest') interest += amount;
+                else if (tx.kind === 'fee') fees += amount;
+                else if (tx.kind === 'card') card += amount;
             }
         });
 

@@ -8,23 +8,24 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
     <link rel="stylesheet" href="/styles.css">
 </head>
 <body class="dark-theme">
     <div class="app-container">
         <header>
             <h1>Portfolio <span>Analyzer</span></h1>
-            <p>Upload your Trade Republic transaction export (CSV) to analyze asset classes, country exposure and risk — and simulate your accumulation plan.</p>
+            <p>Upload your Trade Republic (CSV) or Fineco (Excel) transaction exports to analyze asset classes, country exposure and risk — and simulate your accumulation plan.</p>
         </header>
 
         <main>
             <section id="upload-section" class="card dropzone">
-                <input type="file" id="csv-file" accept=".csv,.txt" hidden />
+                <input type="file" id="csv-file" accept=".csv,.txt,.xls,.xlsx" multiple hidden />
                 <label for="csv-file" class="dropzone-label">
                     <div class="icon">📁</div>
-                    <h3>Drag &amp; Drop your CSV here</h3>
-                    <p>or click to browse</p>
-                    <p class="text-sm text-gray mt-1">Works with Trade Republic transaction exports (Italian, English or German column names).</p>
+                    <h3>Drag &amp; Drop your export files here</h3>
+                    <p>or click to browse (multiple files allowed)</p>
+                    <p class="text-sm text-gray mt-1">Trade Republic CSV exports (Italian, English or German) and Fineco Excel exports — "Ordini e Contabili" for securities, plus "Movimenti conto" for cash.</p>
                 </label>
             </section>
 
