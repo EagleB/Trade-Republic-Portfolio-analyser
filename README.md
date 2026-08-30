@@ -1,12 +1,14 @@
 # Trade Republic Portfolio Analyser
 
-A single-page web app for analyzing Trade Republic transaction CSV exports entirely on your local machine. Upload your export, and it reconstructs your holdings, cash balance, asset allocation, and risk profile, then lets you simulate future contributions and goals.
+A single-page web app for analyzing broker transaction exports entirely on your local machine — Trade Republic (CSV) and Fineco (Excel) are supported. Upload your export(s), and it reconstructs your holdings, cash balance, asset allocation, and risk profile, then lets you simulate future contributions and goals.
 
 All portfolio logic runs in the browser. A small local Flask backend exists only to fetch per-asset metadata (country exposure, risk class, volatility, TER) from justETF/Yahoo Finance, since the browser can't call those sites directly due to CORS.
 
 ## Features
 
-- **CSV import** — supports Italian, English, and German Trade Republic export formats, with automatic column and transaction-type detection.
+- **Multi-broker import** — Trade Republic CSV exports (Italian, English, and German column names) and Fineco Excel exports, with automatic per-file format detection; upload one or more files at once.
+  - Trade Republic: the transaction CSV export.
+  - Fineco: "Ordini e Contabili" (securities transactions) plus, optionally, "Movimenti conto" (bank movements) for cash, deposits, dividends, and fees. Settlement rows appearing in both files are de-duplicated automatically.
 - **Portfolio reconstruction** — holdings per ISIN and cash balance derived from deposits, withdrawals, and fees.
 - **Asset metadata lookup** — country/region exposure, developed vs. emerging market split, SRRI risk class (1–7), volatility, max drawdown, and TER per holding, fetched once per ISIN and cached locally.
 - **Allocation charts** — visual breakdown of your portfolio by asset class, region, and risk.
@@ -44,13 +46,15 @@ Runs Flask in debug mode on port 5000.
 
 ## Usage
 
-1. Export your transaction history as CSV from the Trade Republic app.
-2. Open the app in your browser and upload the CSV.
+1. Export your transaction history:
+   - **Trade Republic**: transaction history as CSV from the app.
+   - **Fineco**: Portafoglio → Reportistica → Ordini e Contabili → Esporta Excel (securities); optionally also the Movimenti conto Excel export for cash reconstruction.
+2. Open the app in your browser and upload the file(s) — multiple files can be dropped together; the broker format is detected per file.
 3. The app parses transactions, builds your holdings and cash position, and fetches metadata for each ISIN (cached for 7 days in `asset_cache.json`).
 4. Review your metrics, risk profile, and allocation charts in the holdings table.
 5. Use the accumulation-plan simulator to model future contributions against target allocations, and the goal planner to check progress toward a target amount and date.
 
-A sample file, `sample_transactions.csv` (semicolon-delimited, Italian-style), is included for trying the app without your own data.
+Sample files are included for trying the app without your own data: `sample_transactions.csv` (Trade Republic, semicolon-delimited Italian-style) and `sample_fineco/` (synthetic Fineco Excel exports, regenerable with `make_fineco_sample.py`).
 
 ## Architecture
 
@@ -70,9 +74,11 @@ All three stages return the same dict shape (name, asset class, countries, devel
 
 Risk class is derived from annualized volatility via standard SRRI bands (`srri_from_volatility`). The opaque "Other" country bucket from justETF is spread proportionally across developed/emerging markets (`split_dev_emerging`).
 
-**Frontend (`static/app.js`)** — one large `DOMContentLoaded` closure. Chart.js and PapaParse are loaded from CDNs in `index.html`; dark theme only.
+**Frontend (`static/app.js`)** — one large `DOMContentLoaded` closure. Chart.js, PapaParse, and SheetJS are loaded from CDNs in `index.html`; dark theme only.
 
-Flow: CSV upload → PapaParse → column auto-detection (`findColumn`) and transaction-type classification (`TYPE_RULES`) → holdings built per ISIN, cash reconstructed from deposits/withdrawals/fees → one API call per ISIN for metadata → `renderAll()`.
+Flow: file upload (one or more) → PapaParse for CSV / SheetJS for Excel → per-file format detection (`detectFormat`, by header signature) → broker adapter (`adaptTradeRepublic`, `adaptFinecoSecurities`, `adaptFinecoMovements`) producing canonical transactions `{ kind, isin, name, amount, shares }` → shared aggregation (`processTransactions`): holdings built per ISIN, cash reconstructed from deposits/withdrawals/fees → one API call per ISIN for metadata → `renderAll()`.
+
+Trade Republic adapters use column auto-detection (`findColumn`) and transaction-type classification (`TYPE_RULES`). The Fineco securities adapter derives buy/sell from the Segno column (A/V) and emits Commissioni as fee transactions; the Fineco movements adapter classifies rows by Descrizione and skips securities-settlement rows already covered by the securities export. Fineco Excel preamble rows above the real header are detected and skipped.
 
 Amount parsing (`parseNumber`) handles both `1.234,56` and `1,234.56` number formats.
 
@@ -87,7 +93,9 @@ static/
   app.js                 All frontend logic
   styles.css              Styles
 asset_cache.json         Per-ISIN metadata cache (7-day TTL, generated at runtime)
-sample_transactions.csv  Sample Italian-style export for manual testing
+sample_transactions.csv  Sample Italian-style Trade Republic export for manual testing
+sample_fineco/           Synthetic Fineco Excel exports for manual testing
+make_fineco_sample.py    Regenerates sample_fineco/ (requires openpyxl)
 test_scrape.py           Manual script to probe justETF scraping for one hardcoded ISIN
 run_server.bat           Windows launcher
 ```
@@ -97,13 +105,13 @@ run_server.bat           Windows launcher
 There is no automated test suite. Before trusting a change:
 
 - **Backend**: run `python app.py`, hit `/api/fetch-asset-data?isin=<ISIN>` for both an ETF ISIN (justETF path) and a stock ISIN (yfinance path), and confirm `asset_cache.json` gets a new entry.
-- **Frontend**: load `sample_transactions.csv` through the UI and check that metrics, charts, the holdings table, the simulator, and the goal planner all populate without console errors.
+- **Frontend**: load `sample_transactions.csv` through the UI and check that metrics, charts, the holdings table, the simulator, and the goal planner all populate without console errors. For Fineco changes, load the two `sample_fineco/` files together and verify holdings match the securities file and settlement rows are not double-counted in cash.
 - **Amount parsing**: test both `1.234,56` and `1,234.56` inputs — regressions here are silent (wrong numbers, no crash).
 - **New scraping/risk logic**: verify with a quick manual script (`test_scrape.py`-style) before trusting it against live sites, since justETF markup can change without notice.
 
 ## Privacy
 
-All CSV parsing and portfolio computation happens locally in your browser. The only network calls are per-ISIN metadata lookups to justETF/Yahoo Finance (no transaction data is sent), and those are cached locally after the first fetch.
+All file parsing and portfolio computation happens locally in your browser. The only network calls are per-ISIN metadata lookups to justETF/Yahoo Finance (no transaction data is sent), and those are cached locally after the first fetch.
 
 ## License
 
