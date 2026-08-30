@@ -270,6 +270,63 @@ def serve_static(path):
     return send_from_directory('static', path)
 
 
+@app.route('/api/correlation', methods=['POST'])
+def correlation_matrix():
+    payload = request.get_json(silent=True) or {}
+    assets = payload.get('assets') or []  # [{isin, name}, ...]
+    if not isinstance(assets, list) or len(assets) < 2:
+        return jsonify({'success': False, 'error': 'At least 2 assets required'}), 400
+
+    returns_by_isin = {}
+    labels = {}
+    for a in assets:
+        isin = (a.get('isin') or '').strip().upper()
+        name = (a.get('name') or '').strip()
+        if not isin:
+            continue
+        labels[isin] = name or isin
+        try:
+            symbol = yf_resolve_ticker(isin, name)
+            if not symbol:
+                continue
+            hist = yf.Ticker(symbol).history(period='1y')['Close'].dropna()
+            if len(hist) > 30:
+                returns = hist.pct_change().dropna()
+                # Normalize to calendar date so assets on different exchanges/timezones
+                # (e.g. LSE vs NASDAQ) can still be aligned by trading day.
+                returns.index = returns.index.tz_localize(None).normalize()
+                returns_by_isin[isin] = returns
+        except Exception as e:
+            print(f'correlation fetch error for {isin}: {e}')
+
+    covered = list(returns_by_isin.keys())
+    if len(covered) < 2:
+        return jsonify({'success': False, 'error': 'Not enough price history available for these assets'}), 200
+
+    matrix = {}
+    for i in covered:
+        matrix[i] = {}
+        for j in covered:
+            if i == j:
+                matrix[i][j] = 1.0
+                continue
+            joined = returns_by_isin[i].align(returns_by_isin[j], join='inner')
+            ri, rj = joined
+            if len(ri) < 20:
+                matrix[i][j] = None
+                continue
+            corr = ri.corr(rj)
+            matrix[i][j] = None if corr is None or (corr != corr) else round(float(corr), 3)
+
+    return jsonify({
+        'success': True,
+        'isins': covered,
+        'labels': {k: labels.get(k, k) for k in covered},
+        'matrix': matrix,
+        'skipped': [a.get('isin') for a in assets if a.get('isin') and a.get('isin').strip().upper() not in covered],
+    })
+
+
 @app.route('/api/fetch-asset-data', methods=['GET'])
 def fetch_asset_data():
     isin = (request.args.get('isin') or '').strip().upper()

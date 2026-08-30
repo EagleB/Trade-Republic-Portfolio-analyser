@@ -45,6 +45,7 @@ document.addEventListener('DOMContentLoaded', () => {
         growthRates: { ...DEFAULT_GROWTH_PCT },   // class -> expected annual return in %
         horizonMonths: 24,
         horizonUnit: 'months',                    // 'months' | 'years'
+        correlation: null,                        // { isins, labels, matrix, skipped } | null while unfetched
     };
 
     // Annual return (decimal) for a class; scenarioIdx: 0 = pessimistic, 1 = optimistic, null = base
@@ -73,6 +74,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (e.dataTransfer.files.length) handleFiles(e.dataTransfer.files);
     });
     fileInput.addEventListener('change', (e) => { if (e.target.files.length) handleFiles(e.target.files); });
+
+    $('home-btn').addEventListener('click', () => location.reload());
 
     async function handleFiles(fileList) {
         const files = Array.from(fileList);
@@ -183,6 +186,8 @@ document.addEventListener('DOMContentLoaded', () => {
     function detectFormat(headers) {
         const low = headers.map(h => h.toLowerCase());
         const has = (p) => low.some(h => h.includes(p));
+        // Native TR export: ISIN in a `symbol` column, machine `type` codes, signed `amount`.
+        if (has('symbol') && has('amount') && (has('asset_class') || has('transaction_id'))) return 'tr-native';
         if (has('entrate') && has('uscite')) return 'fineco-mov';
         if (has('segno') || (has('controvalore') && has('quantit'))) return 'fineco-sec';
         return 'tr';
@@ -192,6 +197,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!rows.length) return [];
         const headers = Object.keys(rows[0]).filter(Boolean);
         const fmt = detectFormat(headers);
+        if (fmt === 'tr-native') return adaptTradeRepublicNative(rows, headers);
         if (fmt === 'fineco-mov') return adaptFinecoMovements(rows, headers);
         if (fmt === 'fineco-sec') return adaptFinecoSecurities(rows, headers);
         return adaptTradeRepublic(rows, headers);
@@ -226,6 +232,71 @@ document.addEventListener('DOMContentLoaded', () => {
                 amount: value,
                 shares: Math.abs(parseNumber(row[sharesCol]) || 0),
             });
+        });
+        return txs;
+    }
+
+    // Native Trade Republic export: ISIN in `symbol`, machine `type` codes, signed
+    // `amount`, plus separate `fee`/`tax` columns that are additional to `amount`.
+    const TR_NATIVE_TYPES = {
+        BUY: 'buy',
+        SELL: 'sell',
+        CUSTOMER_INPAYMENT: 'deposit',
+        CUSTOMER_INBOUND: 'deposit',
+        // Free-share perk: credits cash that the paired BUY row immediately spends
+        // (net cash-neutral). Treat as a deposit; the BUY builds the holding.
+        STOCKPERK: 'deposit',
+    };
+
+    function adaptTradeRepublicNative(rows, headers) {
+        // Prefer an exact column-name match, since several native headers are substrings
+        // of others (`type` in `account_type`, `name` in `counterparty_name`,
+        // `amount` in `original_amount`). Fall back to substring for minor drift.
+        const exact = (name, ...fallback) =>
+            headers.find(h => h.toLowerCase() === name) || findColumn(headers, [name, ...fallback]);
+
+        const isinCol = exact('symbol', 'isin');
+        const typeCol = exact('type');
+        const valueCol = exact('amount');
+        const nameCol = exact('name');
+        const sharesCol = exact('shares', 'share', 'quantit');
+        const feeCol = exact('fee');
+        const taxCol = exact('tax');
+        const descCol = exact('description');
+
+        if (!valueCol) throw new Error('could not detect an amount column.');
+
+        const txs = [];
+        rows.forEach(row => {
+            const value = parseNumber(row[valueCol]);
+            const isin = String(row[isinCol] || '').trim().toUpperCase();
+            const isAsset = ISIN_RE.test(isin);
+            const rawType = String(row[typeCol] || '').trim().toUpperCase();
+            let kind = TR_NATIVE_TYPES[rawType];
+            if (!kind) {
+                // Unlisted code: classify from type + description text, then fall back
+                // to sign for security rows (money out = buy).
+                kind = classifyType(`${rawType} ${row[descCol] || ''}`);
+                if (isAsset && !['buy', 'sell', 'dividend'].includes(kind)) {
+                    kind = value < 0 ? 'buy' : 'sell';
+                }
+            }
+            const name = String(row[nameCol] || isin || '');
+
+            if (!isNaN(value)) {
+                txs.push({
+                    kind,
+                    isin: isAsset ? isin : '',
+                    name,
+                    amount: value,
+                    shares: Math.abs(parseNumber(row[sharesCol]) || 0),
+                });
+            }
+
+            // fee/tax are extra deductions on top of `amount`; emit them as separate
+            // cash outflows so the reconstructed balance stays correct.
+            const extra = Math.abs(parseNumber(row[feeCol]) || 0) + Math.abs(parseNumber(row[taxCol]) || 0);
+            if (extra > 0) txs.push({ kind: 'fee', isin: '', name: 'Fees & tax', amount: -extra, shares: 0 });
         });
         return txs;
     }
@@ -368,6 +439,155 @@ document.addEventListener('DOMContentLoaded', () => {
         $('dashboard').classList.remove('hidden');
         initSimulatorDefaults();
         renderAll();
+        fetchCorrelation();
+    }
+
+    // ------------------------------------------------------------------
+    // Correlation matrix
+    // ------------------------------------------------------------------
+    async function fetchCorrelation() {
+        const holdings = Object.values(state.holdings).filter(h => h.invested > 1);
+        const statusEl = $('correlation-status');
+        const wrapEl = $('correlation-wrap');
+        const suggEl = $('correlation-suggestions');
+        if (holdings.length < 2) {
+            statusEl.textContent = 'Need at least 2 holdings to compute correlation.';
+            wrapEl.innerHTML = '';
+            if (suggEl) suggEl.innerHTML = '';
+            return;
+        }
+        statusEl.textContent = 'Fetching historical prices and computing correlations...';
+        wrapEl.innerHTML = '';
+        if (suggEl) suggEl.innerHTML = '';
+        try {
+            const res = await fetch('/api/correlation', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ assets: holdings.map(h => ({ isin: h.isin, name: h.name })) }),
+            });
+            const json = await res.json();
+            if (!json.success || !json.matrix) {
+                statusEl.textContent = json.error || 'Correlation data unavailable for these holdings.';
+                state.correlation = null;
+                return;
+            }
+            state.correlation = json;
+            renderCorrelationMatrix();
+        } catch (e) {
+            statusEl.textContent = 'Could not fetch correlation data.';
+            state.correlation = null;
+        }
+    }
+
+    // Correlation above which two assets are flagged as offering little diversification benefit.
+    const STRONG_CORR = 0.8;
+
+    function corrColor(v) {
+        // Diverging scale, deep enough that white text stays legible everywhere:
+        // -1 -> deep green (independent/offsetting), ~0 -> dark slate, +1 -> deep red (move together).
+        if (v === null || v === undefined) return null;
+        const t = Math.max(-1, Math.min(1, v));
+        const mix = (a, b, f) => Math.round(a + (b - a) * f);
+        const SLATE = [63, 70, 87];      // #3f4657 mid/zero tone
+        const GREEN = [21, 128, 61];     // #15803d
+        const RED = [185, 28, 28];       // #b91c1c
+        let rgb;
+        if (t >= 0) {
+            rgb = SLATE.map((c, i) => mix(c, RED[i], t));
+        } else {
+            rgb = SLATE.map((c, i) => mix(c, GREEN[i], -t));
+        }
+        return `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`;
+    }
+
+    function renderCorrelationMatrix() {
+        const wrapEl = $('correlation-wrap');
+        const statusEl = $('correlation-status');
+        const data = state.correlation;
+        if (!data) { wrapEl.innerHTML = ''; return; }
+
+        const isins = data.isins;
+        const labels = data.labels;
+        const short = (name) => name.length > 16 ? name.slice(0, 15) + '…' : name;
+
+        let html = '<table class="corr-table"><thead><tr><th></th>';
+        isins.forEach(isin => {
+            html += `<th class="corr-col-label" title="${labels[isin]}">${short(labels[isin])}</th>`;
+        });
+        html += '</tr></thead><tbody>';
+        isins.forEach(rowIsin => {
+            html += `<tr><th class="corr-row-label" title="${labels[rowIsin]}">${short(labels[rowIsin])}</th>`;
+            isins.forEach(colIsin => {
+                const v = data.matrix[rowIsin] ? data.matrix[rowIsin][colIsin] : null;
+                if (v === null || v === undefined) {
+                    html += `<td class="corr-cell corr-na">–</td>`;
+                } else {
+                    const bg = corrColor(v);
+                    html += `<td class="corr-cell" style="background:${bg}">${v.toFixed(2)}</td>`;
+                }
+            });
+            html += '</tr>';
+        });
+        html += '</tbody></table>';
+        html += `<div class="corr-legend"><span>−1 independent</span><div class="corr-legend-scale"></div><span>+1 move together</span></div>`;
+        wrapEl.innerHTML = html;
+
+        const skipped = (data.skipped || []).length;
+        statusEl.textContent = skipped
+            ? `${isins.length} holding(s) shown. ${skipped} skipped — no price history found.`
+            : `${isins.length} holding(s) shown.`;
+
+        renderCorrelationInsights(data);
+    }
+
+    function renderCorrelationInsights(data) {
+        const el = $('correlation-suggestions');
+        if (!el) return;
+        const isins = data.isins;
+        const labels = data.labels;
+
+        // Collect each unordered off-diagonal pair once.
+        const pairs = [];
+        for (let i = 0; i < isins.length; i++) {
+            for (let j = i + 1; j < isins.length; j++) {
+                const v = data.matrix[isins[i]] ? data.matrix[isins[i]][isins[j]] : null;
+                if (v !== null && v !== undefined) {
+                    pairs.push({ a: labels[isins[i]], b: labels[isins[j]], v });
+                }
+            }
+        }
+
+        if (!pairs.length) {
+            el.innerHTML = '';
+            return;
+        }
+
+        const items = [];
+
+        // Diversification score = average pairwise correlation.
+        const avg = pairs.reduce((s, p) => s + p.v, 0) / pairs.length;
+        let scoreLvl, scoreLabel;
+        if (avg < 0.3) { scoreLvl = 'good'; scoreLabel = 'Well diversified'; }
+        else if (avg <= 0.6) { scoreLvl = 'warning'; scoreLabel = 'Moderately diversified'; }
+        else { scoreLvl = 'serious'; scoreLabel = 'Weakly diversified — your holdings tend to move together'; }
+        items.push([scoreLvl,
+            `📊 <strong>Diversification score: ${scoreLabel}</strong> — average pairwise correlation ${avg.toFixed(2)}.`]);
+
+        // Flag strongly-correlated pairs (top 5 by correlation).
+        const strong = pairs.filter(p => p.v >= STRONG_CORR).sort((a, b) => b.v - a.v).slice(0, 5);
+        if (strong.length) {
+            strong.forEach(p => {
+                items.push(['serious',
+                    `⚠️ <strong>${p.a}</strong> and <strong>${p.b}</strong> are highly correlated (${p.v.toFixed(2)}) — they provide little diversification benefit relative to each other.`]);
+            });
+        } else {
+            items.push(['good',
+                '✅ No strongly correlated pairs — your holdings move fairly independently of one another.']);
+        }
+
+        el.innerHTML = items.map(([lvl, msg]) =>
+            `<div class="suggestion-item" style="border-left-color:${STATUS[lvl] || STATUS.warning}">${msg}</div>`
+        ).join('');
     }
 
     function fallbackMeta(h) {

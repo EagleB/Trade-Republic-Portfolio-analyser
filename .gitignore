@@ -1,5 +1,6 @@
 *.csv
 !sample_transactions.csv
+!sample_tr_native.csv
 asset_cache.json
 __pycache__/
 CLAUDE.md

@@ -25,7 +25,7 @@
                     <div class="icon">📁</div>
                     <h3>Drag &amp; Drop your export files here</h3>
                     <p>or click to browse (multiple files allowed)</p>
-                    <p class="text-sm text-gray mt-1">Trade Republic CSV exports (Italian, English or German) and Fineco Excel exports — "Ordini e Contabili" for securities, plus "Movimenti conto" for cash.</p>
+                    <p class="text-sm text-gray mt-1">Trade Republic CSV exports (native column format, or Italian / English / German) and Fineco Excel exports — "Ordini e Contabili" for securities, plus "Movimenti conto" for cash.</p>
                 </label>
             </section>
 
@@ -36,6 +36,10 @@
             </div>
 
             <section id="dashboard" class="hidden">
+
+                <div class="dashboard-toolbar">
+                    <button id="home-btn" class="btn-primary" type="button">🏠 Analyze new file</button>
+                </div>
 
                 <!-- Key metrics -->
                 <div class="metrics-grid">
@@ -95,6 +99,15 @@
                         <h3>Top Holdings</h3>
                         <div class="chart-container"><canvas id="topHoldingsChart"></canvas></div>
                     </div>
+                </div>
+
+                <!-- Correlation matrix -->
+                <div class="card mt-4" id="correlation-card">
+                    <h2>Correlation Matrix <span class="text-sm text-gray">(based on 1-year daily returns, Yahoo Finance)</span></h2>
+                    <p class="text-gray text-sm">How your holdings move relative to each other. Closer to +1 means they move together (less diversification benefit); closer to -1 or 0 means they offset or move independently.</p>
+                    <div id="correlation-status" class="text-sm text-gray mt-1"></div>
+                    <div id="correlation-wrap" class="table-wrap mt-2"></div>
+                    <div id="correlation-suggestions" class="suggestions-list mt-2"></div>
                 </div>
 
                 <!-- Holdings table -->

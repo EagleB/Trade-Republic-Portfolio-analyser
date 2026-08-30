@@ -54,6 +54,10 @@ header p {
     color: var(--text-muted);
 }
 
+.dashboard-toolbar {
+    margin-bottom: 1.5rem;
+}
+
 .card {
     background: var(--card-bg);
     border: 1px solid var(--card-border);
@@ -455,4 +459,76 @@ input[type=checkbox] { accent-color: var(--primary); width: 16px; height: 16px; 
     background: var(--primary);
     border-color: var(--primary);
     color: #fff;
+}
+
+/* Correlation matrix */
+.corr-table {
+    border-collapse: separate;
+    border-spacing: 4px;
+    font-size: 0.9rem;
+    margin: 0 auto;
+}
+
+.corr-table th {
+    text-transform: none;
+    letter-spacing: normal;
+    font-size: 0.85rem;
+    padding: 0.4rem 0.6rem;
+}
+
+.corr-table th.corr-row-label {
+    text-align: right;
+    white-space: nowrap;
+    color: var(--text-main);
+    font-weight: 500;
+}
+
+.corr-table th.corr-col-label {
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+    max-width: 2.4rem;
+    height: 8rem;
+    text-align: left;
+    color: var(--text-main);
+    font-weight: 500;
+}
+
+.corr-cell {
+    min-width: 3.8rem;
+    height: 2.6rem;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+    border-radius: 8px;
+    color: #f1f5f9;
+    font-weight: 600;
+    border-bottom: none;
+    padding: 0.3rem;
+}
+
+.corr-cell.corr-na {
+    color: var(--text-muted);
+    background: rgba(255, 255, 255, 0.04) !important;
+}
+
+.corr-legend {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 1.25rem;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.corr-legend-scale {
+    flex: 1;
+    max-width: 320px;
+    height: 12px;
+    border-radius: 6px;
+    background: linear-gradient(90deg, #15803d, #3f4657, #b91c1c);
+}
+
+@media (max-width: 800px) {
+    .corr-table { font-size: 0.78rem; }
+    .corr-cell { min-width: 2.6rem; height: 2.1rem; }
+    .corr-table th.corr-col-label { height: 6.5rem; }
 }
